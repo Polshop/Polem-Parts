@@ -1,0 +1,85 @@
+# Gemfile
+source 'https://rubygems.org'
+
+gem 'rails', '~> 7.0'
+gem 'sqlite3', '~> 1.4'
+gem 'devise'
+gem 'puma', '~> 6.0'
+gem 'pay' # Voor betalingen (Stripe, Mollie, PayPal, iDEAL)
+gem 'sidekiq' # Achtergrondprocessen
+gem 'capistrano', require: false # Deployment
+gem 'turbo-rails' # Hotwire Turbo voor snelle updates
+gem 'stimulus-rails' # Stimulus.js voor interactieve UI
+gem 'tailwindcss-rails' # Tailwind CSS voor styling
+gem 'tom-select-rails' # Voor een betere multi-select UI
+gem 'roo' # Voor Excel-import
+
+group :development, :test do
+  gem 'pry'
+  gem 'rspec-rails'
+end
+
+# Configuratie en modellen genereren
+run 'bundle install'
+run 'rails g tailwindcss:install'
+run 'rails g devise:install'
+run 'rails g devise User'
+run 'rails g scaffold Product name:string price:decimal stock:integer article_code:string description:text image_url:string product_type:string category:string[]'
+run 'rails g scaffold Order user:references total_price:decimal status:string'
+run 'rails g model Cart user:references'
+run 'rails g model CartItem cart:references product:references quantity:integer'
+
+# Database migreren
+run 'rails db:migrate'
+
+# Excel-import functionaliteit toevoegen (app/controllers/products_controller.rb)
+inject_into_file 'app/controllers/products_controller.rb', after: "class ProductsController < ApplicationController\n" do <<-CODE
+  require 'roo'
+  def import
+    file = params[:file]
+    return redirect_to products_path, alert: "Selecteer een Excel-bestand." unless file.present?
+
+    spreadsheet = Roo::Spreadsheet.open(file.path)
+    header = spreadsheet.row(1)
+    (2..spreadsheet.last_row).each do |i|
+      row = Hash[[header, spreadsheet.row(i)].transpose]
+      product = Product.find_or_initialize_by(article_code: row["article_code"])
+      product.update(
+        name: row["name"],
+        price: row["price"],
+        stock: row["stock"],
+        description: row["description"],
+        image_url: row["image_url"],
+        product_type: row["product_type"],
+        category: row["category"].split(",")
+      )
+    end
+    redirect_to products_path, notice: "Producten succesvol geïmporteerd."
+  end
+CODE
+end
+
+# Route toevoegen voor importeren (config/routes.rb)
+inject_into_file 'config/routes.rb', after: "resources :products" do <<-CODE
+ do
+  collection { post :import }
+end
+CODE
+end
+
+# Import-knop toevoegen in de productenpagina (app/views/products/index.html.erb)
+inject_into_file 'app/views/products/index.html.erb', before: "<div class=\"p-4 flex justify-between\">" do <<-CODE
+  <div class="mb-4">
+    <form action="<%= import_products_path %>" method="post" enctype="multipart/form-data" class="flex space-x-2">
+      <input type="file" name="file" class="border p-2 rounded w-full md:w-auto">
+      <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded w-full md:w-auto">Importeren</button>
+    </form>
+  </div>
+CODE
+end
+
+# Mobielvriendelijke aanpassingen voor Tailwind CSS (app/views/products/index.html.erb)
+inject_into_file 'app/views/products/index.html.erb', after: "<div id=\"products\" class=\"" do <<-CODE
+  grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4"
+CODE
+end
